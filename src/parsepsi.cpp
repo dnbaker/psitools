@@ -22,7 +22,6 @@ int main(int argc, char **argv) {
         std::exit(1);
     }
     mat = parsepsi<>(argv[optind + 1]);
-    //std::cout << mat << '\n';
     blaze::Archive<std::ofstream> outarch(argv[optind + 2]);
     outarch << mat;
     std::fprintf(stderr, "Wrote matrix to blaze dump. %zu rows, %zu cols\n", mat.rows(), mat.columns());

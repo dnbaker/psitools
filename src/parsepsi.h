@@ -3,7 +3,7 @@
 
 size_t countlines(std::string path) {
     gzFile fp = gzopen(path.data(), "rb");
-    if(!fp) throw 2;
+    if(!fp) throw std::runtime_error("Couldn't count lines");
     size_t ret = 0;
     for(int c;(c = gzgetc(fp)) != EOF; ret += c == '\n');
     gzclose(fp);
@@ -12,7 +12,6 @@ size_t countlines(std::string path) {
 
 template<typename FT=float>
 blaze::DynamicMatrix<FT> leafcutter_parsepsi(gzFile fp, unsigned numlines, int sep=' ') {
-    if(!fp) throw 3;
     std::vector<unsigned> ids;
     char buf[1 << 16];
     gzgets(fp, buf, sizeof(buf));
@@ -29,7 +28,8 @@ blaze::DynamicMatrix<FT> leafcutter_parsepsi(gzFile fp, unsigned numlines, int s
         for(size_t i = 1; i < offsets.size(); ++i) {
             char *s;
             double num = std::strtod(buf + offsets[i], &s);
-            ret(rownum, i - 1) = num / std::atof(s + 1);
+            double denom = std::atof(s + 1);
+            ret(rownum, i - 1) = denom ? num / denom: -1.;
         }
         rownum++;
     }
@@ -41,7 +41,7 @@ blaze::DynamicMatrix<FT> leafcutter_parsepsi(gzFile fp, unsigned numlines, int s
 
 template<typename FT=float>
 blaze::DynamicMatrix<FT> parsepsi(gzFile fp, unsigned numlines, int sep=',') {
-    if(!fp) throw 3;
+    if(!fp) throw std::runtime_error("Couldn't open file to parsepsi");
     std::vector<unsigned> ids;
     char buf[1 << 16];
     gzgets(fp, buf, sizeof(buf));
@@ -56,7 +56,9 @@ blaze::DynamicMatrix<FT> parsepsi(gzFile fp, unsigned numlines, int sep=',') {
         ids.push_back(std::atoi(buf));
         ks::split(buf, sep, offsets);
         for(size_t i = 12; i < offsets.size(); ++i) {
-            ret(rownum, i - 12) = std::atof(buf + offsets[i]);
+            auto v = std::atof(buf + offsets[i]);
+            if(v > 0) v *= .01;
+            ret(rownum, i - 12) = v;
             assert(std::strlen(buf + offsets[i]));
         }
         rownum++;
@@ -69,8 +71,9 @@ blaze::DynamicMatrix<FT> parsepsi(gzFile fp, unsigned numlines, int sep=',') {
 
 template<typename FT=float>
 auto parsepsi(std::string path) {
+    std::fprintf(stderr, "path: %s\n", path.data());
     gzFile fp = gzopen(path.data(), "rb");
-    if(!fp) throw 4;
+    if(!fp) throw std::runtime_error("Couldn't open file to parsepsi");
     auto ret = parsepsi(fp, countlines(path) - 1); // Subtract 1 for header
     gzclose(fp);
     return ret;
@@ -79,7 +82,7 @@ auto parsepsi(std::string path) {
 template<typename FT=float>
 auto leafcutter_parsepsi(std::string path) {
     gzFile fp = gzopen(path.data(), "rb");
-    if(!fp) throw 4;
+    if(!fp) throw std::runtime_error("Couldn't open file to lcparsepsi");
     auto ret = leafcutter_parsepsi(fp, countlines(path) - 1); // Subtract 1 for header
     gzclose(fp);
     return ret;
