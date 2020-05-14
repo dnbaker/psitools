@@ -44,7 +44,7 @@ blaze::DynamicMatrix<FT> parsepsi(gzFile fp, unsigned numlines, int sep=',') {
     if(!fp) throw std::runtime_error("Couldn't open file to parsepsi");
     std::vector<unsigned> ids;
     char buf[1 << 16];
-    gzgets(fp, buf, sizeof(buf));
+    if(!gzgets(fp, buf, sizeof(buf))) throw std::runtime_error("Failed to read header");
     std::vector<int> offsets;
     ks::split(buf, sep, offsets);
     unsigned nsamples = offsets.size() - 12;
@@ -59,7 +59,7 @@ blaze::DynamicMatrix<FT> parsepsi(gzFile fp, unsigned numlines, int sep=',') {
             auto v = std::atof(buf + offsets[i]);
             if(v > 0) v *= .01;
             ret(rownum, i - 12) = v;
-            assert(std::strlen(buf + offsets[i]));
+            assert(buf && std::strlen(buf + offsets[i]));
         }
         rownum++;
     }
@@ -71,6 +71,7 @@ blaze::DynamicMatrix<FT> parsepsi(gzFile fp, unsigned numlines, int sep=',') {
 
 template<typename FT=float>
 auto parsepsi(std::string path) {
+    if(path.empty()) path = "";
     std::fprintf(stderr, "path: %s\n", path.data());
     gzFile fp = gzopen(path.data(), "rb");
     if(!fp) throw std::runtime_error("Couldn't open file to parsepsi");

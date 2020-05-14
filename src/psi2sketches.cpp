@@ -8,7 +8,7 @@
 #include "sketch/mh.h"
 
 void usage(const char *s) {
-    std::fprintf(stderr, "usage: %s <opts> inputfile blazeout\n-l: Leafcutter mode\n-h: Usage.\n-p: Set sketch output prefix. Default: empty string.\n", *s);
+    std::fprintf(stderr, "usage: %s <opts> inputfile blazeout\n-l: Leafcutter mode\n-h: Usage.\n-p: Set sketch output prefix. Default: empty string.\n", s);
     std::exit(1);
 }
 
@@ -28,7 +28,6 @@ public:
 
 int main(int argc, char **argv) {
     std::string outprefix;
-    blaze::DynamicMatrix<float> mat;
     int c;
     bool leafcutter = false;
     int nhashes = 100;
@@ -43,10 +42,11 @@ int main(int argc, char **argv) {
         }
     }
     std::cerr << "outprefix: " << outprefix << '\n';
-    if(optind + 2 >= argc) {
+    if(optind + 1 != argc) {
         usage(argv[0]);
     }
-    mat = parsepsi<>(argv[optind]);
+    std::cerr << "Getting mat\n";
+    blaze::DynamicMatrix<float> mat(leafcutter ? leafcutter_parsepsi<>(argv[optind]): parsepsi<>(argv[optind]));
     std::fprintf(stderr, "Now sketching %zu rows, %zu cols\n", mat.rows(), mat.columns());
     std::ofstream header(outprefix + ".header");
     header << "#" << mat.rows() << 'x' << mat.columns() << '.' << nhashes << " 16-bit signatures.\n";
@@ -56,12 +56,11 @@ int main(int argc, char **argv) {
     // Don't have to set maximum weight, since normalized is default
     #pragma omp parallel for
     for(size_t i = 0; i < mat.rows(); ++i) {
-        std::cerr << "i: " << i << '\n';
         auto hash = hasher.hash(row(mat, i, blaze::unchecked));
         std::string seedstr;
         if(seed) seedstr = std::string(".") + std::to_string(seed);
         std::string opath = outprefix + '.' + std::to_string(i) + '.' + std::to_string(nhashes) + seedstr + ".psi";
-        std::FILE *ofp = std::fopen(opath.data(), "rb");
+        std::FILE *ofp = std::fopen(opath.data(), "wb");
         if(!ofp) throw 1;
         ::write(::fileno(ofp), (const char *)hash.data(), hash.size() * sizeof(hash[0]));
         std::fclose(ofp);
@@ -71,6 +70,7 @@ int main(int argc, char **argv) {
         blaze::SymmetricMatrix<blaze::DynamicMatrix<float>> dm(mat.rows());
         float inv = 1. / nhashes;
         for(size_t i = 0; i < mat.rows(); ++i) {
+            dm(i,i) = 1.;
             auto p1 = results[i].data();
             for(size_t j = i + 1; j < mat.rows(); ++j) {
                 auto p2 = results[j].data();
