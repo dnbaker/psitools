@@ -1,0 +1,9 @@
+[submodule "blaze"]
+	path = blaze
+	url = https://bitbucket.org/blaze-lib/blaze.git
+[submodule "kspp"]
+	path = kspp
+	url = https://github.com/dnbaker/kspp
+[submodule "sketch"]
+	path = sketch
+	url = https://github.com/dnbaker/sketch
