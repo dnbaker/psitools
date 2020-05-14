@@ -1,6 +1,7 @@
 #include "parsepsi.h"
 #include "blaze/Util.h"
 #include <fstream>
+#include <map>
 #include <iostream>
 #include <string>
 #include <unistd.h>
@@ -28,7 +29,7 @@ struct ShrivastavaHash {
 public:
 #endif
 
-auto &update(ska::flat_hash_map<uint16_t, uint32_t> &out, const ska::flat_hash_map<uint16_t, uint32_t> &in) {
+auto &update(std::map<uint16_t, uint32_t> &out, const std::map<uint16_t, uint32_t> &in) {
     for(const auto &pair: in)
         out[pair.first] += pair.second;
     return out;
@@ -64,7 +65,7 @@ int main(int argc, char **argv) {
     header << "#" << mat.rows() << 'x' << mat.columns() << '.' << nhashes << " 16-bit signatures.\n";
     header.flush();
     sketch::mh::ShrivastavaHash<true, std::uint16_t> hasher(mat.columns(), nhashes, seed);
-    ska::flat_hash_map<uint16_t, uint32_t> counts;
+    std::map<uint16_t, uint32_t> counts;
     std::vector<std::vector<std::uint16_t>> results(mat.rows());
     auto start = gett();
     if(use_max_as_cap) {
@@ -72,7 +73,7 @@ int main(int argc, char **argv) {
         hasher.set_threshold(maxv.data());
     }
     // Don't have to set maximum weight, since normalized is default
-    #pragma omp declare reduction (merge : ska::flat_hash_map<uint16_t, uint32_t> : update(omp_out, omp_in))
+    #pragma omp declare reduction (merge : std::map<uint16_t, uint32_t> : update(omp_out, omp_in))
 
     #pragma omp parallel for reduction(merge: counts)
     for(size_t i = 0; i < mat.rows(); ++i) {
@@ -91,6 +92,7 @@ int main(int argc, char **argv) {
     for(const auto &pair: counts) {
         std::fprintf(stderr, "value %u has occured %u times\n", pair.first, pair.second);
     }
+    assert(std::accumulate(counts.begin(), counts.end(), size_t(0), [](auto x, auto y) {return x + y.second;}) == mat.rows() * nhashes);
     auto stop = gett();
     auto t = timediff2ms(start, stop);
     std::fprintf(stderr, "Sketching took %gms\n", t);
