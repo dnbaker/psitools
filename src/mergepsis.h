@@ -75,5 +75,6 @@ blaze::DynamicMatrix<float> files2master(const std::vector<std::string> &paths, 
     for(size_t i = 0; i < sizes.size(); ++i) {
         std::fprintf(stderr, "File %s had %zu entries\n", paths[i].data(), sizes[i]);
     }
+    transpose(fulldata);
     return fulldata;
 }
