@@ -128,21 +128,7 @@ int main(int argc, char **argv) {
             }
         }
         stop = gett();
-        t = timediff2ms(start, stop);
-        std::fprintf(stderr, "Comparing sketches took %gms\n", t);
-        std::cout << dm << '\n';
-        start = gett();
-        OMP_PFOR
-        for(size_t i = 0; i < mat.rows(); ++i) {
-            dm(i, i) = 0.;
-            auto r = row(mat, i, blaze::unchecked);
-            auto dmr = row(dm, i, blaze::unchecked);
-            for(size_t j = i + 1; j < mat.rows(); ++j)
-                dmr[j] = blaze::l2Norm(r - row(mat, j, blaze::unchecked));
-        }
-        stop = gett();
-        t = timediff2ms(start, stop);
-        std::fprintf(stderr, "Comparing full vectors took %gms\n", t);
+        td::fprintf(stderr, "Comparing sketches took %gms\n", t);
         std::cout << dm << '\n';
     }
 }
