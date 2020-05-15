@@ -10,6 +10,12 @@
 #include "timer.h"
 #include "mergepsis.h"
 
+template<typename IT>
+static INLINE auto count_paired_1bits(IT x) {
+    static constexpr IT bitmask = static_cast<IT>(0x5555555555555555uLL);
+    return sketch::integral::popcount((x >> 1) & x & bitmask);
+}
+
 void usage(const char *s) {
     std::fprintf(stderr, "usage: %s <opts> inputfile blazeout\n-l: Leafcutter mode\n-h: Usage.\n-p: Set sketch output prefix. Default: empty string.\n"
                          "-m: multifile mode. Treat inputfile as a list of files, one per line, merge them into one experiment, and then sketch.\n"
@@ -46,10 +52,12 @@ int main(int argc, char **argv) {
     bool leafcutter = false;
     bool use_max_as_cap = false;
     bool multifile = false;
+    bool skip_matrix = false;
     int nhashes = 100;
     uint64_t seed = 0;
-    while((c = getopt(argc, argv, "p:H:S:mMlh?")) >= 0) {
+    while((c = getopt(argc, argv, "p:H:S:smMlh?")) >= 0) {
         switch(c) {
+            case 's': skip_matrix = true; break;
             case 'l': leafcutter = true; break;
             case 'p': outprefix = optarg; break;
             case 'H': nhashes = std::atoi(optarg); break;
@@ -105,17 +113,21 @@ int main(int argc, char **argv) {
         for(const auto v: results[i])
             ++counts[v];
     }
+    size_t totalsum = 0;
     for(const auto &pair: counts) {
         std::fprintf(stderr, "value %u has occured %u times\n", pair.first, pair.second);
+        totalsum += pair.second;
     }
+    std::fprintf(stderr, "total trials %zu for %zu hashes for an average of %0.12g\n", totalsum, counts.size(), double(totalsum) / counts.size());
     assert(std::accumulate(counts.begin(), counts.end(), size_t(0), [](auto x, auto y) {return x + y.second;}) == mat.rows() * nhashes);
     auto stop = gett();
     auto t = timediff2ms(start, stop);
     std::fprintf(stderr, "Sketching took %gms\n", t);
-    if(mat.rows() < 1000) {
+    if(!skip_matrix) {
         start = gett();
         blaze::SymmetricMatrix<blaze::DynamicMatrix<float>> dm(mat.rows());
         float inv = 1. / nhashes;
+        const size_t e = (nhashes / 16) * 16;
         OMP_PFOR
         for(size_t i = 0; i < mat.rows(); ++i) {
             dm(i,i) = 1.;
@@ -123,7 +135,17 @@ int main(int argc, char **argv) {
             for(size_t j = i + 1; j < mat.rows(); ++j) {
                 auto p2 = results[j].data();
                 int shared = 0;
+#ifdef __AVX2__
+                const __m256i *vp1 = (const __m256i *)(p1);
+                const __m256i *vp2 = (const __m256i *)(p2);
+                size_t i = 0;
+                for(;i < e; i += 16)
+                    shared += count_paired_1bits(_mm256_movemask_epi8(_mm256_cmpeq_epi16(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++))));
+                for(;i < nhashes;++i)
+                    shared += p1[i] == p2[i];
+#else
                 for(int k = 0; k < nhashes;++k) shared += p1[k] == p2[k];
+#endif
                 dm(i, j) = shared * inv;
             }
         }

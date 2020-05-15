@@ -10,30 +10,32 @@ ska::flat_hash_map<std::string, blaze::DynamicVector<float>> file2lines(std::str
     ska::flat_hash_map<std::string, blaze::DynamicVector<float>> ret;
     gzFile fp = gzopen(path.data(), "rb");
     if(!fp) throw std::runtime_error("Failed to open");
-    gzclose(fp);
     std::vector<unsigned> offsets;
-    char buf[1 << 16];
-    if(!gzgets(fp, buf, sizeof(buf))) throw 2;
+    std::vector<char> buf(1 << 20);
+    if(!gzgets(fp, buf.data(), buf.size())) throw 2;
     const int n_other_fields = leafcutter ? 1: 12;
     auto dosplit = [&]() {
         if(leafcutter) {
-            ks::split(buf, ' ', offsets);
+            ks::split(buf.data(), ' ', offsets);
         } else {
-            ks::split(buf, ',', offsets);
+            ks::split(buf.data(), ',', offsets);
         }
     };
     dosplit();
     size_t vsize = offsets.size() - n_other_fields;
+    std::fprintf(stderr, "vsize: %zu\n", vsize);
     std::string label;
-    while(gzgets(fp, buf, sizeof(buf))) {
+    while(gzgets(fp, buf.data(), buf.size())) {
         dosplit();
-        label = std::string(buf);
+        assert(offsets.size() == vsize + n_other_fields);
+        label = std::string(buf.data());
         blaze::DynamicVector<float> key(vsize);
         for(size_t i = n_other_fields; i < offsets.size(); ++i) {
-            key[i - n_other_fields] = std::atof(buf + offsets[i]);
+            key[i - n_other_fields] = std::atof(buf.data() + offsets[i]);
         }
         ret[label] = std::move(key);
     }
+    gzclose(fp);
     return ret;
 }
 
@@ -44,22 +46,23 @@ blaze::DynamicMatrix<float> files2master(const std::vector<std::string> &paths, 
         collections[i] = file2lines(paths[i], leafcutter);
     }
     ska::flat_hash_map<std::string, uint32_t> labeler;
-    std::vector<std::string> keyv;
     {
         std::set<std::string> keys;
         for(const auto &col: collections)
             for(const auto &pair: col)
                 keys.insert(pair.first);
-        keyv.assign(keys.begin(), keys.end());
-        for(size_t i = 0; i < keyv.size(); ++i)
-            labeler[keyv[i]] = i;
+        size_t i = 0;
+        for(const auto &key: keys)
+            labeler[key] = i++;
     }
-    size_t total_samples = std::accumulate(collections.begin(), collections.end(), size_t(0), [](auto csum, const auto &x) {return csum + x.size();});
-    blaze::DynamicMatrix<float> fulldata(keyv.size(), total_samples);
+    size_t total_samples = std::accumulate(collections.begin(), collections.end(), size_t(0), [](auto csum, const auto &x) {return csum + x.begin()->second.size();});
+    std::fprintf(stderr, "Number of keys: %zu. samples: %zu\n", labeler.size(), total_samples);
+    blaze::DynamicMatrix<float> fulldata(labeler.size(), total_samples);
     std::vector<size_t> sizes;
     fulldata = 0.;
     size_t sample_index = 0;
     for(size_t i = 0; i < collections.size(); ++i) {
+        std::fprintf(stderr, "sample index %zu with i = %zu\n", sample_index, i);
         const auto &col = collections[i];
         for(const auto &pair: col) {
             auto id = labeler.at(pair.first);
