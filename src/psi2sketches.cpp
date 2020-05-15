@@ -55,11 +55,12 @@ int main(int argc, char **argv) {
     bool skip_matrix = false;
     int nhashes = 100;
     uint64_t seed = 0;
-    while((c = getopt(argc, argv, "p:H:S:smMlh?")) >= 0) {
+    while((c = getopt(argc, argv, "t:p:H:S:smMlh?")) >= 0) {
         switch(c) {
             case 's': skip_matrix = true; break;
             case 'l': leafcutter = true; break;
             case 'p': outprefix = optarg; break;
+            case 't': omp_set_num_threads(std::atoi(optarg)); break;
             case 'H': nhashes = std::atoi(optarg); break;
             case 'S': seed = std::strtoull(optarg, nullptr, 10); break;
             case 'M': use_max_as_cap = true; break;
