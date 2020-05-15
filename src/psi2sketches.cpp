@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
             }
         }
         stop = gett();
-        td::fprintf(stderr, "Comparing sketches took %gms\n", t);
+        std::fprintf(stderr, "Comparing sketches took %gms\n", t);
         std::cout << dm << '\n';
     }
 }
