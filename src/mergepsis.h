@@ -72,7 +72,6 @@ blaze::DynamicMatrix<float> files2master(const std::vector<std::string> &paths, 
     std::vector<size_t> sizes;
     fulldata = 0.;
     size_t sample_index = 0;
-    OMP_PFOR
     for(size_t i = 0; i < collections.size(); ++i) {
         std::fprintf(stderr, "sample index %zu with i = %zu\n", sample_index, i);
         const auto &col = collections[i];

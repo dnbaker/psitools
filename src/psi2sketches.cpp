@@ -9,6 +9,9 @@
 #include "sketch/mh.h"
 #include "timer.h"
 #include "mergepsis.h"
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 template<typename IT>
 static INLINE auto count_paired_1bits(IT x) {
