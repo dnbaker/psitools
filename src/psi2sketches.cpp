@@ -8,9 +8,13 @@
 #include <getopt.h>
 #include "sketch/mh.h"
 #include "timer.h"
+#include "mergepsis.h"
 
 void usage(const char *s) {
-    std::fprintf(stderr, "usage: %s <opts> inputfile blazeout\n-l: Leafcutter mode\n-h: Usage.\n-p: Set sketch output prefix. Default: empty string.\n", s);
+    std::fprintf(stderr, "usage: %s <opts> inputfile blazeout\n-l: Leafcutter mode\n-h: Usage.\n-p: Set sketch output prefix. Default: empty string.\n"
+                         "-m: multifile mode. Treat inputfile as a list of files, one per line, merge them into one experiment, and then sketch.\n"
+                         "-M: Use the maximum observed PSi as a cap\n"
+                         "-H: number of hashes [100]\n", s);
     std::exit(1);
 }
 auto gett() {return std::chrono::high_resolution_clock::now();}
@@ -41,15 +45,17 @@ int main(int argc, char **argv) {
     int c;
     bool leafcutter = false;
     bool use_max_as_cap = false;
+    bool multifile = false;
     int nhashes = 100;
     uint64_t seed = 0;
-    while((c = getopt(argc, argv, "p:H:S:Mlh?")) >= 0) {
+    while((c = getopt(argc, argv, "p:H:S:mMlh?")) >= 0) {
         switch(c) {
             case 'l': leafcutter = true; break;
             case 'p': outprefix = optarg; break;
             case 'H': nhashes = std::atoi(optarg); break;
             case 'S': seed = std::strtoull(optarg, nullptr, 10); break;
             case 'M': use_max_as_cap = true; break;
+            case 'm': multifile = true; break;
             case 'h': usage(argv[0]);
         }
     }
@@ -58,7 +64,17 @@ int main(int argc, char **argv) {
         usage(argv[0]);
     }
     std::cerr << "Getting mat\n";
-    blaze::DynamicMatrix<float> mat(leafcutter ? leafcutter_parsepsi<>(argv[optind]): parsepsi<>(argv[optind]));
+    blaze::DynamicMatrix<float> mat;
+    if(multifile) {
+        std::vector<std::string> paths;
+        std::ifstream ifs(argv[optind]);
+        for(std::string line;std::getline(ifs, line);) {
+            paths.emplace_back(std::move(line));
+        }
+        mat = files2master(paths, leafcutter);
+    } else {
+        mat = leafcutter ? leafcutter_parsepsi<>(argv[optind]): parsepsi<>(argv[optind]);
+    }
     mat = blaze::clamp(mat, 0.f, 1.f);
     std::fprintf(stderr, "Now sketching %zu rows, %zu cols\n", mat.rows(), mat.columns());
     std::ofstream header(outprefix + ".header");

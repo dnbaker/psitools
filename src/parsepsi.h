@@ -1,3 +1,4 @@
+#pragma once
 #include "blaze/Math.h"
 #include "kspp/ks.h"
 
