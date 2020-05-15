@@ -5,6 +5,17 @@
 
 
 //#pragma omp declare reduction (merge : ska::flat_hash_map<std::string, blaze::DynamicVector<float>> : update(omp_out, omp_in))
+//
+
+void getlabel(std::string &ret, char *s) {
+    char *os = s;
+    if(!(s = std::strchr(s, ':'))) goto fail;
+    if(!(s = std::strchr(s + 1, ':'))) goto fail;
+    if(!(s = std::strchr(s + 1, ':'))) goto fail;
+    ret = std::string(os, s);
+    return;
+    fail: throw std::runtime_error("Failed to get label");
+}
 
 ska::flat_hash_map<std::string, blaze::DynamicVector<float>> file2lines(std::string path, bool leafcutter) {
     ska::flat_hash_map<std::string, blaze::DynamicVector<float>> ret;
@@ -28,7 +39,7 @@ ska::flat_hash_map<std::string, blaze::DynamicVector<float>> file2lines(std::str
     while(gzgets(fp, buf.data(), buf.size())) {
         dosplit();
         assert(offsets.size() == vsize + n_other_fields);
-        label = std::string(buf.data());
+        getlabel(label, buf.data());
         blaze::DynamicVector<float> key(vsize);
         for(size_t i = n_other_fields; i < offsets.size(); ++i) {
             key[i - n_other_fields] = std::atof(buf.data() + offsets[i]);
@@ -61,6 +72,7 @@ blaze::DynamicMatrix<float> files2master(const std::vector<std::string> &paths, 
     std::vector<size_t> sizes;
     fulldata = 0.;
     size_t sample_index = 0;
+    OMP_PFOR
     for(size_t i = 0; i < collections.size(); ++i) {
         std::fprintf(stderr, "sample index %zu with i = %zu\n", sample_index, i);
         const auto &col = collections[i];

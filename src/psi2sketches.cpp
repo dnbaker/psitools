@@ -117,9 +117,9 @@ int main(int argc, char **argv) {
     size_t totalsum = 0;
     for(const auto &pair: counts) {
         std::fprintf(stderr, "value %u has occured %u times\n", pair.first, pair.second);
-        totalsum += pair.second;
+        totalsum += pair.second * pair.first;
     }
-    std::fprintf(stderr, "total trials %zu for %zu hashes for an average of %0.12g\n", totalsum, counts.size(), double(totalsum) / counts.size());
+    std::fprintf(stderr, "total trials %zu for %zu hashes for an average of %0.12g\n", totalsum, mat.rows() * nhashes, double(totalsum) / (mat.rows() * nhashes));
     assert(std::accumulate(counts.begin(), counts.end(), size_t(0), [](auto x, auto y) {return x + y.second;}) == mat.rows() * nhashes);
     auto stop = gett();
     auto t = timediff2ms(start, stop);
@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
             for(size_t j = i + 1; j < mat.rows(); ++j) {
                 auto p2 = results[j].data();
                 int shared = 0;
-#ifdef __AVX2__
+#if __AVX2__
                 const __m256i *vp1 = (const __m256i *)(p1);
                 const __m256i *vp2 = (const __m256i *)(p2);
                 size_t i = 0;
@@ -151,7 +151,7 @@ int main(int argc, char **argv) {
             }
         }
         stop = gett();
-        std::fprintf(stderr, "Comparing sketches took %gms\n", t);
+        std::fprintf(stderr, "Comparing sketches took %gms\n", timediff2ms(start, stop));
         std::cout << dm << '\n';
     }
 }
