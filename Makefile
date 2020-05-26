@@ -4,7 +4,7 @@ CXX?=g++
 
 INCLUDE=-I. -Iblaze -Isketch/include -Isketch -Isketch/libpopcnt
 
-WARNINGS=-Wall -Wextra
+WARNINGS=-Wall -Wextra -Wno-unused-function
 
 CXXFLAGS+= -O3 -march=native $(INCLUDE) -std=c++17 -fopenmp -DBLAZE_USE_SHARED_MEMORY_PARALLELIZATION=0 $(WARNINGS)
 

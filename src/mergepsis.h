@@ -88,30 +88,16 @@ blaze::DynamicMatrix<float> files2master(const std::vector<std::string> &paths, 
     std::vector<size_t> sizes;
     fulldata = 0.;
     size_t sample_index = 0;
-    OMP_PFOR
     for(size_t i = 0; i < collections.size(); ++i) {
-#if 1
         std::fprintf(stderr, "sample index %zu with i = %zu\n", sample_index, i);
-        for(const auto &pair: collections[i]) {
+        const auto &col = collections[i];
+        for(const auto &pair: col) {
             auto id = labeler.at(pair.first);
             subvector(row(fulldata, id), sample_index, pair.second.size()) = trans(pair.second);
         }
-        auto csz = collections[i].begin()->second.size();
+        auto csz = col.begin()->second.size();
         sample_index += csz;
         sizes.push_back(csz);
-#else
-        std::fprintf(stderr, "sample index %zu with i = %zu\n", sizesums[i], i);
-        for(const auto &pair: collections[i]) {
-            auto ind = labeler.at(pair.first);
-            std::fprintf(stderr, "ind: %u\n", ind);
-            auto r(row(fulldata, ind));
-            std::fprintf(stderr, "second size: %zu\n", pair.second.size());
-            subvector(r, sizesums[i], pair.second.size()) = trans(pair.second);
-        }
-#endif
-    }
-    for(size_t i = 0; i < sizes.size(); ++i) {
-        std::fprintf(stderr, "File %s had %zu entries\n", paths[i].data(), sizes[i]);
     }
     transpose(fulldata);
     return fulldata;

@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
     bool multifile = false;
     bool skip_matrix = false;
     bool normalize = true;
-    int nhashes = 100;
+    unsigned nhashes = 100;
     uint64_t seed = 0;
     while((c = getopt(argc, argv, "t:p:H:S:NsmMlh?")) >= 0) {
         switch(c) {
@@ -101,19 +101,25 @@ int main(int argc, char **argv) {
     }
     std::fprintf(stderr, "Now sketching %zu rows, %zu cols\n", mat.rows(), mat.columns());
     std::ofstream header(outprefix + ".header");
-    header << "#" << mat.rows() << 'x' << mat.columns() << '.' << nhashes << " 16-bit signatures.\n";
+    header << "#" << mat.rows() << 'x' << mat.columns() << ". " << nhashes << " 16-bit signatures.\n";
     header.flush();
     sketch::mh::ShrivastavaHash<true, std::uint16_t> hasher(mat.columns(), nhashes, seed);
+#if PERFORM_REDUCTION
     std::map<uint16_t, uint32_t> counts;
+#endif
     std::vector<std::vector<std::uint16_t>> results(mat.rows());
     auto start = gett();
     if(!normalize) {
         hasher.set_threshold(blaze::max(mat));
     }
     // Don't have to set maximum weight, since normalized is default
+#if PERFORM_REDUCTION
     #pragma omp declare reduction (merge : std::map<uint16_t, uint32_t> : update(omp_out, omp_in))
 
     #pragma omp parallel for reduction(merge: counts)
+#else
+    #pragma omp parallel for
+#endif
     for(size_t i = 0; i < mat.rows(); ++i) {
         auto hash = hasher.hash(row(mat, i, blaze::unchecked));
         std::string seedstr;
@@ -124,9 +130,12 @@ int main(int argc, char **argv) {
         ::write(::fileno(ofp), (const char *)hash.data(), hash.size() * sizeof(hash[0]));
         std::fclose(ofp);
         results[i] = std::move(hash);
+#if PERFORM_REDUCTION
         for(const auto v: results[i])
             ++counts[v];
+#endif
     }
+#if PERFORM_REDUCTION
     size_t totalsum = 0;
     for(const auto &pair: counts) {
         std::fprintf(stderr, "value %u has occured %u times\n", pair.first, pair.second);
@@ -134,6 +143,7 @@ int main(int argc, char **argv) {
     }
     std::fprintf(stderr, "total trials %zu for %zu hashes for an average of %0.12g\n", totalsum, mat.rows() * nhashes, double(totalsum) / (mat.rows() * nhashes));
     assert(std::accumulate(counts.begin(), counts.end(), size_t(0), [](auto x, auto y) {return x + y.second;}) == mat.rows() * nhashes);
+#endif
     auto stop = gett();
     auto t = timediff2ms(start, stop);
     std::fprintf(stderr, "Sketching took %gms\n", t);
@@ -184,5 +194,11 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "Comparing sketches took %gms\n", timediff2ms(start, stop));
         blaze::Archive<std::ofstream> arch("dist.blaze");
         arch << dm;
+        std::FILE *tmpfp = std::fopen("dist.float32.np", "w");
+        if(!tmpfp) throw 2;
+        const int fd = ::fileno(tmpfp);
+        for(size_t i = 0; i < dm.rows(); ++i)
+            ::write(fd, row(dm, i, blaze::unchecked).data(), dm.columns() * sizeof(float));
+        std::fclose(tmpfp);
     }
 }
