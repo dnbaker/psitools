@@ -12,7 +12,7 @@ size_t countlines(std::string path) {
 }
 
 template<typename FT=float>
-blaze::DynamicMatrix<FT> leafcutter_parsepsi(gzFile fp, unsigned numlines, int sep=' ') {
+blaze::DynamicMatrix<FT> leafcutter_parsepsi(gzFile fp, unsigned numlines, int sep=' ', bool normalize=true) {
     std::vector<unsigned> ids;
     char buf[1 << 16];
     gzgets(fp, buf, sizeof(buf));
@@ -29,8 +29,12 @@ blaze::DynamicMatrix<FT> leafcutter_parsepsi(gzFile fp, unsigned numlines, int s
         for(size_t i = 1; i < offsets.size(); ++i) {
             char *s;
             double num = std::strtod(buf + offsets[i], &s);
-            double denom = std::atof(s + 1);
-            ret(rownum, i - 1) = denom ? num / denom: -1.;
+            auto &ref = ret(rownum, i - 1);
+            if(!normalize) ref = num;
+            else {
+                double denom = std::atof(s + 1);
+                ref = denom ? num / denom: -1.;
+            }
         }
         rownum++;
     }
@@ -41,7 +45,8 @@ blaze::DynamicMatrix<FT> leafcutter_parsepsi(gzFile fp, unsigned numlines, int s
 }
 
 template<typename FT=float>
-blaze::DynamicMatrix<FT> parsepsi(gzFile fp, unsigned numlines, int sep=',') {
+blaze::DynamicMatrix<FT> parsepsi(gzFile fp, unsigned numlines, int sep=',', bool normalize=true) {
+    if(!normalize) throw std::runtime_error("Normalize is not supported for pre-computed PSIs");
     if(!fp) throw std::runtime_error("Couldn't open file to parsepsi");
     std::vector<unsigned> ids;
     char buf[1 << 16];
@@ -71,21 +76,21 @@ blaze::DynamicMatrix<FT> parsepsi(gzFile fp, unsigned numlines, int sep=',') {
 }
 
 template<typename FT=float>
-auto parsepsi(std::string path) {
+auto parsepsi(std::string path, bool normalize=true, int sep=',') {
     if(path.empty()) path = "";
     std::fprintf(stderr, "path: %s\n", path.data());
     gzFile fp = gzopen(path.data(), "rb");
     if(!fp) throw std::runtime_error("Couldn't open file to parsepsi");
-    auto ret = parsepsi(fp, countlines(path) - 1); // Subtract 1 for header
+    auto ret = parsepsi(fp, countlines(path) - 1, sep, normalize); // Subtract 1 for header
     gzclose(fp);
     return ret;
 }
 
 template<typename FT=float>
-auto leafcutter_parsepsi(std::string path) {
+auto leafcutter_parsepsi(std::string path, bool normalize=true, int sep=' ') {
     gzFile fp = gzopen(path.data(), "rb");
     if(!fp) throw std::runtime_error("Couldn't open file to lcparsepsi");
-    auto ret = leafcutter_parsepsi(fp, countlines(path) - 1); // Subtract 1 for header
+    auto ret = leafcutter_parsepsi(fp, countlines(path) - 1, sep, normalize); // Subtract 1 for header
     gzclose(fp);
     return ret;
 }

@@ -48,25 +48,32 @@ auto &update(std::map<uint16_t, uint32_t> &out, const std::map<uint16_t, uint32_
     return out;
 }
 
+void print_args(char **argv) {
+    std::fprintf(stderr, "Command-line: ");
+    do std::fprintf(stderr, "%s ", *argv); while(*++argv);
+    std::fputc('\n', stderr);
+}
+
 
 int main(int argc, char **argv) {
+    print_args(argv);
     std::string outprefix;
     int c;
     bool leafcutter = false;
-    bool use_max_as_cap = false;
     bool multifile = false;
     bool skip_matrix = false;
+    bool normalize = true;
     int nhashes = 100;
     uint64_t seed = 0;
-    while((c = getopt(argc, argv, "t:p:H:S:smMlh?")) >= 0) {
+    while((c = getopt(argc, argv, "t:p:H:S:NsmMlh?")) >= 0) {
         switch(c) {
             case 's': skip_matrix = true; break;
             case 'l': leafcutter = true; break;
             case 'p': outprefix = optarg; break;
             case 't': omp_set_num_threads(std::atoi(optarg)); break;
             case 'H': nhashes = std::atoi(optarg); break;
+            case 'N': normalize = false; break;
             case 'S': seed = std::strtoull(optarg, nullptr, 10); break;
-            case 'M': use_max_as_cap = true; break;
             case 'm': multifile = true; break;
             case 'h': usage(argv[0]);
         }
@@ -83,11 +90,15 @@ int main(int argc, char **argv) {
         for(std::string line;std::getline(ifs, line);) {
             paths.emplace_back(std::move(line));
         }
-        mat = files2master(paths, leafcutter);
+        mat = files2master(paths, leafcutter, normalize);
     } else {
-        mat = leafcutter ? leafcutter_parsepsi<>(argv[optind]): parsepsi<>(argv[optind]);
+        mat = leafcutter ? leafcutter_parsepsi<>(argv[optind], normalize): parsepsi<>(argv[optind], normalize);
     }
-    mat = blaze::clamp(mat, 0.f, 1.f);
+    if(!normalize) {
+        outprefix = outprefix + ".unnorm";
+    } else {
+        mat = blaze::clamp(mat, 0.f, 1.f);
+    }
     std::fprintf(stderr, "Now sketching %zu rows, %zu cols\n", mat.rows(), mat.columns());
     std::ofstream header(outprefix + ".header");
     header << "#" << mat.rows() << 'x' << mat.columns() << '.' << nhashes << " 16-bit signatures.\n";
@@ -96,9 +107,8 @@ int main(int argc, char **argv) {
     std::map<uint16_t, uint32_t> counts;
     std::vector<std::vector<std::uint16_t>> results(mat.rows());
     auto start = gett();
-    if(use_max_as_cap) {
-        blaze::DynamicVector<float, blaze::rowVector> maxv = blaze::max<blaze::columnwise>(mat);
-        hasher.set_threshold(maxv.data());
+    if(!normalize) {
+        hasher.set_threshold(blaze::max(mat));
     }
     // Don't have to set maximum weight, since normalized is default
     #pragma omp declare reduction (merge : std::map<uint16_t, uint32_t> : update(omp_out, omp_in))
@@ -131,7 +141,15 @@ int main(int argc, char **argv) {
         start = gett();
         blaze::SymmetricMatrix<blaze::DynamicMatrix<float>> dm(mat.rows());
         float inv = 1. / nhashes;
-        const size_t e = (nhashes / 16) * 16;
+        const size_t nsimd = 
+#if __AVX2__
+(nhashes / 16) * 16
+#elif __SSE2__
+(nhashes / 8) * 8
+#else
+0
+#endif
+                             ;
         OMP_PFOR
         for(size_t i = 0; i < mat.rows(); ++i) {
             dm(i,i) = 1.;
@@ -143,11 +161,20 @@ int main(int argc, char **argv) {
                 const __m256i *vp1 = (const __m256i *)(p1);
                 const __m256i *vp2 = (const __m256i *)(p2);
                 size_t i = 0;
-                for(;i < e; i += 16)
+                for(;i < nsimd; i += 16)
                     shared += count_paired_1bits(_mm256_movemask_epi8(_mm256_cmpeq_epi16(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++))));
                 for(;i < nhashes;++i)
                     shared += p1[i] == p2[i];
+#elif __SSE2__
+                const __m128i *vp1 = (const __m128i *)(p1);
+                const __m128i *vp2 = (const __m128i *)(p2);
+                size_t i = 0;
+                for(;i < nsimd; i += 8)
+                    shared += count_paired_1bits(_mm_movemask_epi8(_mm_cmpeq_epi16(_mm_loadu_si128(vp1++), _mm_loadu_si128(vp2++))));
+                for(;i < nhashes;++i)
+                    shared += p1[i] == p2[i];
 #else
+                #pragma GCC unroll 16
                 for(int k = 0; k < nhashes;++k) shared += p1[k] == p2[k];
 #endif
                 dm(i, j) = shared * inv;
@@ -155,6 +182,7 @@ int main(int argc, char **argv) {
         }
         stop = gett();
         std::fprintf(stderr, "Comparing sketches took %gms\n", timediff2ms(start, stop));
-        std::cout << dm << '\n';
+        blaze::Archive<std::ofstream> arch("dist.blaze");
+        arch << dm;
     }
 }

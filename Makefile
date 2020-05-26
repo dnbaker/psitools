@@ -4,7 +4,9 @@ CXX?=g++
 
 INCLUDE=-I. -Iblaze -Isketch/include -Isketch -Isketch/libpopcnt
 
-CXXFLAGS+= -O3 -march=native $(INCLUDE) -std=c++17 -fopenmp
+WARNINGS=-Wall -Wextra
+
+CXXFLAGS+= -O3 -march=native $(INCLUDE) -std=c++17 -fopenmp -DBLAZE_USE_SHARED_MEMORY_PARALLELIZATION=0 $(WARNINGS)
 
 all: psi2sketches parsepsi
 
