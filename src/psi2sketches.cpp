@@ -29,19 +29,6 @@ void usage(const char *s) {
 auto gett() {return std::chrono::high_resolution_clock::now();}
 using util::timediff2ms;
 
-#if 0
-template<bool weighted, typename Signature=std::uint16_t, typename IndexType=std::uint32_t,
-         typename FT=float>
-struct ShrivastavaHash {
-    const IndexType nd_;
-    const IndexType nh_;
-    const uint64_t seedseed_;
-    FT mv_;
-    std::unique_ptr<FT[]> maxvals_;
-    schism::Schismatic<IndexType> div_;
-public:
-#endif
-
 auto &update(std::map<uint16_t, uint32_t> &out, const std::map<uint16_t, uint32_t> &in) {
     for(const auto &pair: in)
         out[pair.first] += pair.second;
@@ -52,6 +39,45 @@ void print_args(char **argv) {
     std::fprintf(stderr, "Command-line: ");
     do std::fprintf(stderr, "%s ", *argv); while(*++argv);
     std::fputc('\n', stderr);
+}
+
+static inline int matching_registers_16(const uint16_t *lhs, const uint16_t *rhs, unsigned num_reg) {
+    int ret = 0;
+    unsigned i = 0;
+#ifdef __AVX2__
+    const unsigned nsimd = (num_reg / 16) * 16;
+    const __m256i *vp1 = (const __m256i *)(lhs);
+    const __m256i *vp2 = (const __m256i *)(rhs);
+    for(;i < nsimd; i += 16)
+        ret += count_paired_1bits(_mm256_movemask_epi8(_mm256_cmpeq_epi16(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++))));
+    num_reg -= i;
+    lhs = (const uint16_t *)vp1;
+    rhs = (const uint16_t *)vp2;
+#elif __SSE2__
+    const unsigned nsimd = (num_reg / 8) * 8;
+    const __m128i *vp1 = (const __m128i *)(lhs);
+    const __m128i *vp2 = (const __m128i *)(rhs);
+    for(;i < nsimd; i += 8)
+        ret += count_paired_1bits(_mm_movemask_epi8(_mm_cmpeq_epi16(_mm_loadu_si128(vp1++), _mm_loadu_si128(vp2++))));
+    num_reg -= i;
+    lhs = (const uint16_t *)vp1;
+    rhs = (const uint16_t *)vp2;
+#endif
+    while(num_reg >= 8) {
+        ret += *lhs == *rhs;
+        ret += lhs[1] == rhs[1];
+        ret += lhs[2] == rhs[2];
+        ret += lhs[3] == rhs[3];
+        ret += lhs[4] == rhs[4];
+        ret += lhs[5] == rhs[5];
+        ret += lhs[6] == rhs[6];
+        ret += lhs[7] == rhs[7];
+        lhs += 8;
+        rhs += 8;
+        num_reg -= 8;
+    }
+    while(num_reg--) ret += *lhs++ == *rhs++;
+    return ret;
 }
 
 
@@ -150,44 +176,13 @@ int main(int argc, char **argv) {
     if(!skip_matrix) {
         start = gett();
         blaze::SymmetricMatrix<blaze::DynamicMatrix<float>> dm(mat.rows());
-        float inv = 1. / nhashes;
-        const size_t nsimd = 
-#if __AVX2__
-(nhashes / 16) * 16
-#elif __SSE2__
-(nhashes / 8) * 8
-#else
-0
-#endif
-                             ;
+        const float inv = 1. / nhashes;
         OMP_PFOR
         for(size_t i = 0; i < mat.rows(); ++i) {
             dm(i,i) = 1.;
             auto p1 = results[i].data();
             for(size_t j = i + 1; j < mat.rows(); ++j) {
-                auto p2 = results[j].data();
-                int shared = 0;
-#if __AVX2__
-                const __m256i *vp1 = (const __m256i *)(p1);
-                const __m256i *vp2 = (const __m256i *)(p2);
-                size_t i = 0;
-                for(;i < nsimd; i += 16)
-                    shared += count_paired_1bits(_mm256_movemask_epi8(_mm256_cmpeq_epi16(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++))));
-                for(;i < nhashes;++i)
-                    shared += p1[i] == p2[i];
-#elif __SSE2__
-                const __m128i *vp1 = (const __m128i *)(p1);
-                const __m128i *vp2 = (const __m128i *)(p2);
-                size_t i = 0;
-                for(;i < nsimd; i += 8)
-                    shared += count_paired_1bits(_mm_movemask_epi8(_mm_cmpeq_epi16(_mm_loadu_si128(vp1++), _mm_loadu_si128(vp2++))));
-                for(;i < nhashes;++i)
-                    shared += p1[i] == p2[i];
-#else
-                #pragma GCC unroll 16
-                for(int k = 0; k < nhashes;++k) shared += p1[k] == p2[k];
-#endif
-                dm(i, j) = shared * inv;
+                dm(i, j) = matching_registers_16(p1, results[j].data(), nhashes) * inv;
             }
         }
         stop = gett();
