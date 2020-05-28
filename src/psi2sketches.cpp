@@ -22,14 +22,20 @@ static INLINE auto count_paired_1bits(IT x) {
 void usage(const char *s) {
     std::fprintf(stderr, "usage: %s <opts> inputfile blazeout\n-l: Leafcutter mode\n-h: Usage.\n-p: Set sketch output prefix. Default: empty string.\n"
                          "-m: multifile mode. Treat inputfile as a list of files, one per line, merge them into one experiment, and then sketch.\n"
-                         "-M: Use the maximum observed PSi as a cap\n"
+                         "-M: Use the maximum observed PSI as a cap\n"
                          "-H: number of hashes [100]\n", s);
     std::exit(1);
 }
 auto gett() {return std::chrono::high_resolution_clock::now();}
 using util::timediff2ms;
 
-auto &update(std::map<uint16_t, uint32_t> &out, const std::map<uint16_t, uint32_t> &in) {
+#ifndef REGISTERTYPE
+#define REGISTERTYPE uint16_t
+#endif
+
+using RegisterType = REGISTERTYPE;
+
+auto &update(std::map<RegisterType, uint32_t> &out, const std::map<RegisterType, uint32_t> &in) {
     for(const auto &pair: in)
         out[pair.first] += pair.second;
     return out;
@@ -41,7 +47,81 @@ void print_args(char **argv) {
     std::fputc('\n', stderr);
 }
 
-static inline int matching_registers_16(const uint16_t *lhs, const uint16_t *rhs, unsigned num_reg) {
+
+static inline int matching_registers(const uint32_t *lhs, const uint32_t *rhs, unsigned num_reg) {
+    int ret = 0;
+    unsigned i = 0;
+#ifdef __AVX512BW__
+    const unsigned numvecs = num_reg / 16;
+    const __m512i *lhp(reinterpret_cast<const __m512i *>(lhs));
+    const __m512i *rhp(reinterpret_cast<const __m512i *>(rhs));
+
+    if((uint64_t)lhs % sizeof(__m512i) || (uint64_t)rhs % sizeof(__m512i)) {
+        #pragma GCC unroll 4
+        for(;i < numvecs; ++i) {
+            ret += sketch::popcount(_mm512_cmpeq_epi32_mask(_mm512_loadu_si512(lhp + i), _mm512_loadu_si512(rhp + i)));
+        }
+    } else {
+        #pragma GCC unroll 4
+        for(;i < numvecs; ++i) {
+            ret += sketch::popcount(_mm512_cmpeq_epi32_mask(_mm512_load_si512(lhp + i), _mm512_load_si512(rhp + i)));
+        }
+    }
+    i *= 16;
+#elif __AVX2__
+    const unsigned nsimd = (num_reg / 8) * 8;
+    const __m256i *vp1 = (const __m256i *)(lhs);
+    const __m256i *vp2 = (const __m256i *)(rhs);
+    for(;i < nsimd; i += 8)
+        ret += sketch::popcount(_mm256_movemask_ps(reinterpret_cast<__m256>(_mm256_cmpeq_epi32(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++)))));
+#elif __SSE2__
+    const unsigned nsimd = (num_reg / 4) * 4;
+    const __m128i *vp1 = (const __m128i *)(lhs);
+    const __m128i *vp2 = (const __m128i *)(rhs);
+    for(;i < nsimd; i += 4)
+        ret += sketch::popcount(_mm_movemask_ps(reinterpret_cast<__m128>(_mm_cmpeq_epi32(_mm_loadu_si128(vp1++), _mm_loadu_si128(vp2++)))));
+#endif
+    for(;i < num_reg;++i) ret += lhs[i] == rhs[i];
+    return ret;
+}
+
+static inline int matching_registers(const uint8_t *lhs, const uint8_t *rhs, unsigned num_reg) {
+    int ret = 0;
+    unsigned i = 0;
+#ifdef __AVX512BW__
+    const unsigned numvecs = num_reg / 64;
+    const __m512i *lhp(reinterpret_cast<const __m512i *>(lhs));
+    const __m512i *rhp(reinterpret_cast<const __m512i *>(rhs));
+
+    if((uint64_t)lhs % sizeof(__m512i) || (uint64_t)rhs % sizeof(__m512i)) {
+        #pragma GCC unroll 4
+        for(;i < numvecs; ++i) {
+            ret += sketch::popcount(_mm512_cmpeq_epi8_mask(_mm512_loadu_si512(lhp + i), _mm512_loadu_si512(rhp + i)));
+        }
+    } else {
+        #pragma GCC unroll 4
+        for(;i < numvecs; ++i) {
+            ret += sketch::popcount(_mm512_cmpeq_epi8_mask(_mm512_load_si512(lhp + i), _mm512_load_si512(rhp + i)));
+        }
+    }
+    i *= 64;
+#elif __AVX2__
+    const unsigned nsimd = (num_reg / 32) * 32;
+    const __m256i *vp1 = (const __m256i *)(lhs);
+    const __m256i *vp2 = (const __m256i *)(rhs);
+    for(;i < nsimd; i += 32)
+        ret += sketch::popcount(_mm256_movemask_epi8(_mm256_cmpeq_epi8(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++))));
+#elif __SSE2__
+    const unsigned nsimd = (num_reg / 16) * 16;
+    const __m128i *vp1 = (const __m128i *)(lhs);
+    const __m128i *vp2 = (const __m128i *)(rhs);
+    for(;i < nsimd; i += 16)
+        ret += sketch::popcount(_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(vp1++), _mm_loadu_si128(vp2++))));
+#endif
+    for(;i < num_reg;++i) ret += lhs[i] == rhs[i];
+    return ret;
+}
+static inline int matching_registers(const uint16_t *lhs, const uint16_t *rhs, unsigned num_reg) {
     int ret = 0;
     unsigned i = 0;
 #ifdef __AVX2__
@@ -129,18 +209,18 @@ int main(int argc, char **argv) {
     std::ofstream header(outprefix + ".header");
     header << "#" << mat.rows() << 'x' << mat.columns() << ". " << nhashes << " 16-bit signatures.\n";
     header.flush();
-    sketch::mh::ShrivastavaHash<true, std::uint16_t> hasher(mat.columns(), nhashes, seed);
+    sketch::mh::ShrivastavaHash<true, RegisterType> hasher(mat.columns(), nhashes, seed);
 #if PERFORM_REDUCTION
-    std::map<uint16_t, uint32_t> counts;
+    std::map<RegisterType, uint32_t> counts;
 #endif
-    std::vector<std::vector<std::uint16_t>> results(mat.rows());
+    std::vector<std::vector<RegisterType>> results(mat.rows());
     auto start = gett();
     if(!normalize) {
         hasher.set_threshold(blaze::max(mat));
     }
     // Don't have to set maximum weight, since normalized is default
 #if PERFORM_REDUCTION
-    #pragma omp declare reduction (merge : std::map<uint16_t, uint32_t> : update(omp_out, omp_in))
+    #pragma omp declare reduction (merge : std::map<RegisterType, uint32_t> : update(omp_out, omp_in))
 
     #pragma omp parallel for reduction(merge: counts)
 #else
@@ -182,7 +262,7 @@ int main(int argc, char **argv) {
             dm(i,i) = 1.;
             auto p1 = results[i].data();
             for(size_t j = i + 1; j < mat.rows(); ++j) {
-                dm(i, j) = matching_registers_16(p1, results[j].data(), nhashes) * inv;
+                dm(i, j) = matching_registers(p1, results[j].data(), nhashes) * inv;
             }
         }
         stop = gett();
