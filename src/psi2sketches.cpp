@@ -22,27 +22,20 @@ static INLINE auto count_paired_1bits(IT x) {
 void usage(const char *s) {
     std::fprintf(stderr, "usage: %s <opts> inputfile blazeout\n-l: Leafcutter mode\n-h: Usage.\n-p: Set sketch output prefix. Default: empty string.\n"
                          "-m: multifile mode. Treat inputfile as a list of files, one per line, merge them into one experiment, and then sketch.\n"
-                         "-M: Use the maximum observed PSi as a cap\n"
+                         "-M: Use the maximum observed PSI as a cap\n"
                          "-H: number of hashes [100]\n", s);
     std::exit(1);
 }
 auto gett() {return std::chrono::high_resolution_clock::now();}
 using util::timediff2ms;
 
-#if 0
-template<bool weighted, typename Signature=std::uint16_t, typename IndexType=std::uint32_t,
-         typename FT=float>
-struct ShrivastavaHash {
-    const IndexType nd_;
-    const IndexType nh_;
-    const uint64_t seedseed_;
-    FT mv_;
-    std::unique_ptr<FT[]> maxvals_;
-    schism::Schismatic<IndexType> div_;
-public:
+#ifndef REGISTERTYPE
+#define REGISTERTYPE uint16_t
 #endif
 
-auto &update(std::map<uint16_t, uint32_t> &out, const std::map<uint16_t, uint32_t> &in) {
+using RegisterType = REGISTERTYPE;
+
+auto &update(std::map<RegisterType, uint32_t> &out, const std::map<RegisterType, uint32_t> &in) {
     for(const auto &pair: in)
         out[pair.first] += pair.second;
     return out;
@@ -52,6 +45,119 @@ void print_args(char **argv) {
     std::fprintf(stderr, "Command-line: ");
     do std::fprintf(stderr, "%s ", *argv); while(*++argv);
     std::fputc('\n', stderr);
+}
+
+
+static inline int matching_registers(const uint32_t *lhs, const uint32_t *rhs, unsigned num_reg) {
+    int ret = 0;
+    unsigned i = 0;
+#ifdef __AVX512BW__
+    const unsigned numvecs = num_reg / 16;
+    const __m512i *lhp(reinterpret_cast<const __m512i *>(lhs));
+    const __m512i *rhp(reinterpret_cast<const __m512i *>(rhs));
+
+    if((uint64_t)lhs % sizeof(__m512i) || (uint64_t)rhs % sizeof(__m512i)) {
+        #pragma GCC unroll 4
+        for(;i < numvecs; ++i) {
+            ret += sketch::popcount(_mm512_cmpeq_epi32_mask(_mm512_loadu_si512(lhp + i), _mm512_loadu_si512(rhp + i)));
+        }
+    } else {
+        #pragma GCC unroll 4
+        for(;i < numvecs; ++i) {
+            ret += sketch::popcount(_mm512_cmpeq_epi32_mask(_mm512_load_si512(lhp + i), _mm512_load_si512(rhp + i)));
+        }
+    }
+    i *= 16;
+#elif __AVX2__
+    const unsigned nsimd = (num_reg / 8) * 8;
+    const __m256i *vp1 = (const __m256i *)(lhs);
+    const __m256i *vp2 = (const __m256i *)(rhs);
+    for(;i < nsimd; i += 8)
+        ret += sketch::popcount(_mm256_movemask_ps(reinterpret_cast<__m256>(_mm256_cmpeq_epi32(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++)))));
+#elif __SSE2__
+    const unsigned nsimd = (num_reg / 4) * 4;
+    const __m128i *vp1 = (const __m128i *)(lhs);
+    const __m128i *vp2 = (const __m128i *)(rhs);
+    for(;i < nsimd; i += 4)
+        ret += sketch::popcount(_mm_movemask_ps(reinterpret_cast<__m128>(_mm_cmpeq_epi32(_mm_loadu_si128(vp1++), _mm_loadu_si128(vp2++)))));
+#endif
+    for(;i < num_reg;++i) ret += lhs[i] == rhs[i];
+    return ret;
+}
+
+static inline int matching_registers(const uint8_t *lhs, const uint8_t *rhs, unsigned num_reg) {
+    int ret = 0;
+    unsigned i = 0;
+#ifdef __AVX512BW__
+    const unsigned numvecs = num_reg / 64;
+    const __m512i *lhp(reinterpret_cast<const __m512i *>(lhs));
+    const __m512i *rhp(reinterpret_cast<const __m512i *>(rhs));
+
+    if((uint64_t)lhs % sizeof(__m512i) || (uint64_t)rhs % sizeof(__m512i)) {
+        #pragma GCC unroll 4
+        for(;i < numvecs; ++i) {
+            ret += sketch::popcount(_mm512_cmpeq_epi8_mask(_mm512_loadu_si512(lhp + i), _mm512_loadu_si512(rhp + i)));
+        }
+    } else {
+        #pragma GCC unroll 4
+        for(;i < numvecs; ++i) {
+            ret += sketch::popcount(_mm512_cmpeq_epi8_mask(_mm512_load_si512(lhp + i), _mm512_load_si512(rhp + i)));
+        }
+    }
+    i *= 64;
+#elif __AVX2__
+    const unsigned nsimd = (num_reg / 32) * 32;
+    const __m256i *vp1 = (const __m256i *)(lhs);
+    const __m256i *vp2 = (const __m256i *)(rhs);
+    for(;i < nsimd; i += 32)
+        ret += sketch::popcount(_mm256_movemask_epi8(_mm256_cmpeq_epi8(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++))));
+#elif __SSE2__
+    const unsigned nsimd = (num_reg / 16) * 16;
+    const __m128i *vp1 = (const __m128i *)(lhs);
+    const __m128i *vp2 = (const __m128i *)(rhs);
+    for(;i < nsimd; i += 16)
+        ret += sketch::popcount(_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(vp1++), _mm_loadu_si128(vp2++))));
+#endif
+    for(;i < num_reg;++i) ret += lhs[i] == rhs[i];
+    return ret;
+}
+static inline int matching_registers(const uint16_t *lhs, const uint16_t *rhs, unsigned num_reg) {
+    int ret = 0;
+    unsigned i = 0;
+#ifdef __AVX2__
+    const unsigned nsimd = (num_reg / 16) * 16;
+    const __m256i *vp1 = (const __m256i *)(lhs);
+    const __m256i *vp2 = (const __m256i *)(rhs);
+    for(;i < nsimd; i += 16)
+        ret += count_paired_1bits(_mm256_movemask_epi8(_mm256_cmpeq_epi16(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++))));
+    num_reg -= i;
+    lhs = (const uint16_t *)vp1;
+    rhs = (const uint16_t *)vp2;
+#elif __SSE2__
+    const unsigned nsimd = (num_reg / 8) * 8;
+    const __m128i *vp1 = (const __m128i *)(lhs);
+    const __m128i *vp2 = (const __m128i *)(rhs);
+    for(;i < nsimd; i += 8)
+        ret += count_paired_1bits(_mm_movemask_epi8(_mm_cmpeq_epi16(_mm_loadu_si128(vp1++), _mm_loadu_si128(vp2++))));
+    num_reg -= i;
+    lhs = (const uint16_t *)vp1;
+    rhs = (const uint16_t *)vp2;
+#endif
+    while(num_reg >= 8) {
+        ret += *lhs == *rhs;
+        ret += lhs[1] == rhs[1];
+        ret += lhs[2] == rhs[2];
+        ret += lhs[3] == rhs[3];
+        ret += lhs[4] == rhs[4];
+        ret += lhs[5] == rhs[5];
+        ret += lhs[6] == rhs[6];
+        ret += lhs[7] == rhs[7];
+        lhs += 8;
+        rhs += 8;
+        num_reg -= 8;
+    }
+    while(num_reg--) ret += *lhs++ == *rhs++;
+    return ret;
 }
 
 
@@ -111,18 +217,18 @@ int main(int argc, char **argv) {
     std::ofstream header(outprefix + ".header");
     header << "#" << mat.rows() << 'x' << mat.columns() << ". " << nhashes << " 16-bit signatures.\n";
     header.flush();
-    sketch::mh::ShrivastavaHash<true, std::uint16_t> hasher(mat.columns(), nhashes, seed);
+    sketch::mh::ShrivastavaHash<true, RegisterType> hasher(mat.columns(), nhashes, seed);
 #if PERFORM_REDUCTION
-    std::map<uint16_t, uint32_t> counts;
+    std::map<RegisterType, uint32_t> counts;
 #endif
-    std::vector<std::vector<std::uint16_t>> results(mat.rows());
+    std::vector<std::vector<RegisterType>> results(mat.rows());
     auto start = gett();
     if(!normalize) {
         hasher.set_threshold(blaze::max(mat));
     }
     // Don't have to set maximum weight, since normalized is default
 #if PERFORM_REDUCTION
-    #pragma omp declare reduction (merge : std::map<uint16_t, uint32_t> : update(omp_out, omp_in))
+    #pragma omp declare reduction (merge : std::map<RegisterType, uint32_t> : update(omp_out, omp_in))
 
     #pragma omp parallel for reduction(merge: counts)
 #else
@@ -158,44 +264,13 @@ int main(int argc, char **argv) {
     if(!skip_matrix) {
         start = gett();
         blaze::SymmetricMatrix<blaze::DynamicMatrix<float>> dm(mat.rows());
-        float inv = 1. / nhashes;
-        const size_t nsimd = 
-#if __AVX2__
-(nhashes / 16) * 16
-#elif __SSE2__
-(nhashes / 8) * 8
-#else
-0
-#endif
-                             ;
+        const float inv = 1. / nhashes;
         OMP_PFOR
         for(size_t i = 0; i < mat.rows(); ++i) {
             dm(i,i) = 1.;
             auto p1 = results[i].data();
             for(size_t j = i + 1; j < mat.rows(); ++j) {
-                auto p2 = results[j].data();
-                int shared = 0;
-#if __AVX2__
-                const __m256i *vp1 = (const __m256i *)(p1);
-                const __m256i *vp2 = (const __m256i *)(p2);
-                size_t i = 0;
-                for(;i < nsimd; i += 16)
-                    shared += count_paired_1bits(_mm256_movemask_epi8(_mm256_cmpeq_epi16(_mm256_loadu_si256(vp1++), _mm256_loadu_si256(vp2++))));
-                for(;i < nhashes;++i)
-                    shared += p1[i] == p2[i];
-#elif __SSE2__
-                const __m128i *vp1 = (const __m128i *)(p1);
-                const __m128i *vp2 = (const __m128i *)(p2);
-                size_t i = 0;
-                for(;i < nsimd; i += 8)
-                    shared += count_paired_1bits(_mm_movemask_epi8(_mm_cmpeq_epi16(_mm_loadu_si128(vp1++), _mm_loadu_si128(vp2++))));
-                for(;i < nhashes;++i)
-                    shared += p1[i] == p2[i];
-#else
-                #pragma GCC unroll 16
-                for(int k = 0; k < nhashes;++k) shared += p1[k] == p2[k];
-#endif
-                dm(i, j) = shared * inv;
+                dm(i, j) = matching_registers(p1, results[j].data(), nhashes) * inv;
             }
         }
         stop = gett();
