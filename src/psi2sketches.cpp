@@ -99,6 +99,14 @@ int main(int argc, char **argv) {
     } else {
         mat = blaze::clamp(mat, 0.f, 1.f);
     }
+    {
+        blaze::Archive<std::ofstream> arch("save.features.blaze");
+        arch << mat;
+        std::FILE *ofp = std::fopen("save.features.raw", "wb");
+        for(size_t i = 0; i < mat.rows(); ++i)
+            std::fwrite(&mat(i, 0), mat.columns(), sizeof(float), ofp);
+        std::fclose(ofp);
+    }
     std::fprintf(stderr, "Now sketching %zu rows, %zu cols\n", mat.rows(), mat.columns());
     std::ofstream header(outprefix + ".header");
     header << "#" << mat.rows() << 'x' << mat.columns() << ". " << nhashes << " 16-bit signatures.\n";
